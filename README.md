@@ -30,7 +30,7 @@ pip install -r requirements.txt
 复制环境变量：
 
 ```bash
-copy .env.example .env
+copy .env .env
 ```
 
 在 `.env` 中填入 Qwen API Key：
@@ -57,7 +57,7 @@ npm install
 复制环境变量：
 
 ```bash
-copy .env.example .env
+copy .env .env
 ```
 
 启动前端：
