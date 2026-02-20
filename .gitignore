@@ -11,3 +11,6 @@ frontend/.env
 # Node
 frontend/node_modules/
 frontend/dist/
+
+# image
+python/detected_frames
