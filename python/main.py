@@ -1,8 +1,11 @@
 import argparse
 import time
 from pathlib import Path
+from threading import Lock
 
 from upload_image import FireUploadClient
+from watchdog.events import FileSystemEvent, FileSystemEventHandler
+from watchdog.observers import Observer
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -21,7 +24,7 @@ def parse_args() -> argparse.Namespace:
         "--poll-interval",
         type=float,
         default=0.5,
-        help="Polling interval in seconds",
+        help="Settle delay before uploading after a file event (seconds)",
     )
     parser.add_argument(
         "--endpoint",
@@ -51,6 +54,67 @@ def get_latest_image_path(watch_dir: Path) -> Path | None:
     return max(image_files, key=lambda p: p.stat().st_mtime)
 
 
+class UploadOnImageEventHandler(FileSystemEventHandler):
+    def __init__(
+        self,
+        watch_dir: Path,
+        client: FireUploadClient,
+        settle_delay: float,
+    ) -> None:
+        self.watch_dir = watch_dir
+        self.client = client
+        self.settle_delay = max(0.0, settle_delay)
+        self._uploaded_mtime_by_path: dict[Path, float] = {}
+        self._lock = Lock()
+
+    def _is_supported_image(self, file_path: Path) -> bool:
+        return file_path.suffix.lower() in IMAGE_EXTS
+
+    def _normalize_path(self, src_path: str) -> Path:
+        return Path(src_path).resolve()
+
+    def _try_upload(self, file_path: Path) -> None:
+        if file_path.parent != self.watch_dir:
+            return
+        if not self._is_supported_image(file_path):
+            return
+
+        if self.settle_delay > 0:
+            time.sleep(self.settle_delay)
+
+        if not file_path.exists() or not file_path.is_file():
+            return
+
+        file_mtime = file_path.stat().st_mtime
+        with self._lock:
+            last_mtime = self._uploaded_mtime_by_path.get(file_path, -1.0)
+            if file_mtime <= last_mtime:
+                return
+
+        payload = self.client.upload_image(file_path)
+        print(f"Uploaded: {file_path}")
+        print(payload)
+
+        with self._lock:
+            self._uploaded_mtime_by_path[file_path] = file_mtime
+
+    def on_created(self, event: FileSystemEvent) -> None:
+        if event.is_directory:
+            return
+        try:
+            self._try_upload(self._normalize_path(event.src_path))
+        except Exception as exc:
+            print(f"Upload failed: {exc}")
+
+    def on_modified(self, event: FileSystemEvent) -> None:
+        if event.is_directory:
+            return
+        try:
+            self._try_upload(self._normalize_path(event.src_path))
+        except Exception as exc:
+            print(f"Upload failed: {exc}")
+
+
 def main() -> None:
     args = parse_args()
     watch_dir = Path(args.watch_dir).expanduser()
@@ -62,31 +126,35 @@ def main() -> None:
         min_interval=args.min_upload_interval,
     )
 
-    last_uploaded_path: Path | None = None
-    last_uploaded_mtime: float = -1.0
-
     print(f"Watching: {watch_dir.resolve()}")
     print(f"Endpoint: {args.endpoint}")
+    print("Mode: filesystem events (watchdog)")
 
-    while True:
-        try:
-            latest_image = get_latest_image_path(watch_dir)
-            if latest_image is not None:
-                latest_mtime = latest_image.stat().st_mtime
-                is_new_file = last_uploaded_path is None or latest_image != last_uploaded_path
-                is_updated_file = latest_image == last_uploaded_path and latest_mtime > last_uploaded_mtime
+    handler = UploadOnImageEventHandler(
+        watch_dir=watch_dir.resolve(),
+        client=client,
+        settle_delay=args.poll_interval,
+    )
+    observer = Observer()
+    observer.schedule(handler, path=str(watch_dir.resolve()), recursive=False)
+    observer.start()
 
-                if is_new_file or is_updated_file:
-                    payload = client.upload_image(latest_image)
-                    print(f"Uploaded: {latest_image}")
-                    print(payload)
-                    last_uploaded_path = latest_image
-                    last_uploaded_mtime = latest_mtime
-        except KeyboardInterrupt:
-            print("Stopped.")
-            break
-        except Exception as exc:
-            print(f"Upload failed: {exc}")
+    # Optional one-time catch-up for the latest existing image.
+    try:
+        latest_image = get_latest_image_path(watch_dir)
+        if latest_image is not None:
+            handler._try_upload(latest_image.resolve())
+    except Exception as exc:
+        print(f"Initial upload failed: {exc}")
+
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        print("Stopped.")
+    finally:
+        observer.stop()
+        observer.join()
 
 
 if __name__ == "__main__":

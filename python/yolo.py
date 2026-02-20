@@ -1,4 +1,4 @@
-﻿import os
+import os
 import time
 from datetime import datetime
 
@@ -11,12 +11,12 @@ TARGET_OBJECT = "Fire"
 # Confidence threshold (0.0 - 1.0)
 CONF_THRESHOLD = 0.5
 
-# Save frame when target object is detected
+# Save settings
 SAVE_DETECTED_FRAME = True
-SAVE_DIR = "detected_frames"
+SAVE_DIR = "../fire_detection/backend/detected_frames"
 MAX_SAVE_INTERVAL_SEC = 1.0
 DEDUP_IOU_THRESHOLD = 0.7
-MAX_SAVED_IMAGES = 100
+NO_OBJECT_SAVE_INTERVAL_SEC = 5.0
 # ==========================================
 
 
@@ -63,36 +63,11 @@ def is_same_target_set(current_boxes, saved_boxes, iou_threshold):
     return True
 
 
-def prune_saved_images(save_dir, max_images):
-    image_exts = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
-    files = []
-    for name in os.listdir(save_dir):
-        if not name.lower().endswith(image_exts):
-            continue
-        path = os.path.join(save_dir, name)
-        if os.path.isfile(path):
-            files.append(path)
-
-    if len(files) <= max_images:
-        return
-
-    files.sort(key=os.path.getmtime)
-    to_delete = len(files) - max_images
-    for path in files[:to_delete]:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-
-
 def main():
-    # 1. Load model
     print(f"Loading model and searching for {TARGET_OBJECT} ...")
     model = YOLO("fire_test.pt")
 
-    # 2. Open camera (0 is usually default camera)
     cap = cv2.VideoCapture(0)
-
     if not cap.isOpened():
         print("Cannot open camera")
         return
@@ -102,43 +77,39 @@ def main():
     if SAVE_DETECTED_FRAME:
         os.makedirs(SAVE_DIR, exist_ok=True)
 
-    last_saved_time = 0.0
+    last_detect_saved_time = 0.0
     last_saved_target_boxes = []
+    last_no_object_saved_time = 0.0
 
     while True:
-        # Read one frame
         success, frame = cap.read()
         if not success:
             break
 
-        # 3. Inference
         results = model(frame, stream=True, verbose=False, conf=CONF_THRESHOLD)
 
         object_found = False
         frame_to_save = None
         current_target_boxes = []
 
-        # 4. Parse results
         for result in results:
             classes_detected = result.boxes.cls.cpu().numpy()
             boxes_xyxy = result.boxes.xyxy.cpu().numpy()
 
             for idx, cls_id in enumerate(classes_detected):
                 class_name = result.names[int(cls_id)]
-
                 if class_name == TARGET_OBJECT:
                     object_found = True
                     current_target_boxes.append([float(v) for v in boxes_xyxy[idx]])
-                    # Draw detection boxes/labels on this frame for saving.
-                    frame_to_save = result.plot()
 
-        # 5. If found, print "Fire_deteced" and save annotated frame
+            if object_found:
+                # Save annotated image when target exists.
+                frame_to_save = result.plot()
+
         if object_found:
-            print("Fire_deteced")
-
             if SAVE_DETECTED_FRAME and frame_to_save is not None:
                 now = time.time()
-                interval_ok = (now - last_saved_time) >= MAX_SAVE_INTERVAL_SEC
+                interval_ok = (now - last_detect_saved_time) >= MAX_SAVE_INTERVAL_SEC
                 duplicated = is_same_target_set(
                     current_target_boxes,
                     last_saved_target_boxes,
@@ -148,18 +119,22 @@ def main():
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
                     save_path = os.path.join(SAVE_DIR, f"{TARGET_OBJECT}_{timestamp}.jpg")
                     cv2.imwrite(save_path, frame_to_save)
-                    prune_saved_images(SAVE_DIR, MAX_SAVED_IMAGES)
-                    last_saved_time = now
+                    last_detect_saved_time = now
                     last_saved_target_boxes = current_target_boxes
         else:
-            # Target disappeared; allow saving again when it reappears.
             last_saved_target_boxes = []
+            if SAVE_DETECTED_FRAME:
+                now = time.time()
+                if (now - last_no_object_saved_time) >= NO_OBJECT_SAVE_INTERVAL_SEC:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    save_path = os.path.join(SAVE_DIR, f"no_object_{timestamp}.jpg")
+                    cv2.imwrite(save_path, frame)
+                    last_no_object_saved_time = now
 
         cv2.imshow("YOLO Detection", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
-    # Release resources
     cap.release()
     cv2.destroyAllWindows()
 
