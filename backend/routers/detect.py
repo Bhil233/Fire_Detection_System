@@ -5,7 +5,7 @@ import base64
 import json
 from threading import Lock
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 
 from models.schemas import DetectResponse
 from services.qwen_client import call_qwen
@@ -150,3 +150,12 @@ async def script_detect_fire(file: UploadFile = File(...)) -> DetectResponse:
         image_bytes=image_bytes, mime_type=mime_type, result=result
     )
     return result
+
+
+@router.get("/api/health/script-uploader")
+async def script_uploader_health(request: Request) -> dict:
+    manager = getattr(request.app.state, "script_uploader_manager", None)
+    if manager is None:
+        return {"running": False, "pid": None, "detail": "script_uploader_manager not initialized"}
+    status = manager.status()
+    return {"running": status["running"], "pid": status["pid"]}

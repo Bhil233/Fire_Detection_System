@@ -61,3 +61,10 @@ class ScriptUploaderProcessManager:
         finally:
             print("Script uploader stopped.")
             self._proc = None
+
+    def status(self) -> dict[str, int | bool | None]:
+        if self._proc is None:
+            return {"running": False, "pid": None}
+        if self._proc.poll() is None:
+            return {"running": True, "pid": self._proc.pid}
+        return {"running": False, "pid": None}

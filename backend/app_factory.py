@@ -21,6 +21,7 @@ def create_app() -> FastAPI:
             uploader_manager.stop()
 
     app = FastAPI(title="AI Fire Detection API", lifespan=lifespan)
+    app.state.script_uploader_manager = uploader_manager
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
