@@ -30,6 +30,15 @@ def _to_float(value: str | None, default: float) -> float:
         return default
 
 
+def _to_int(value: str | None, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 SCRIPT_UPLOADER_ENABLED = _to_bool(os.getenv("SCRIPT_UPLOADER_ENABLED"), True)
 SCRIPT_UPLOADER_WATCH_DIR = os.getenv("SCRIPT_UPLOADER_WATCH_DIR", "detected_frames")
 SCRIPT_UPLOADER_ENDPOINT = os.getenv(
@@ -41,3 +50,11 @@ SCRIPT_UPLOADER_MIN_UPLOAD_INTERVAL = _to_float(
     os.getenv("SCRIPT_UPLOADER_MIN_UPLOAD_INTERVAL"), 1.0
 )
 SCRIPT_UPLOADER_TIMEOUT = _to_float(os.getenv("SCRIPT_UPLOADER_TIMEOUT"), 30.0)
+
+MYSQL_URL = os.getenv("MYSQL_URL", "").strip()
+MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
+MYSQL_PORT = _to_int(os.getenv("MYSQL_PORT"), 3306)
+MYSQL_USER = os.getenv("MYSQL_USER", "root")
+MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "fire_detection")
+MYSQL_CHARSET = os.getenv("MYSQL_CHARSET", "utf8mb4")
